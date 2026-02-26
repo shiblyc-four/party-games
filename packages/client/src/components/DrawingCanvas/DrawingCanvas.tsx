@@ -37,8 +37,8 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>
         const strokeHistoryRef = useRef<IDrawStroke[]>([]);
 
         // Drawing state
-        const [color, setColor] = useState(DRAWING_DEFAULTS.PEN_COLOR);
-        const [brushSize, setBrushSize] = useState(DRAWING_DEFAULTS.PEN_WIDTH);
+        const [color, setColor] = useState<string>(DRAWING_DEFAULTS.PEN_COLOR);
+        const [brushSize, setBrushSize] = useState<number>(DRAWING_DEFAULTS.PEN_WIDTH);
         const [tool, setTool] = useState<DrawTool>('pen');
 
         // Get canvas context
