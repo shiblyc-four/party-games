@@ -7,12 +7,13 @@ import { GameRoom } from './rooms/GameRoom.js';
 
 const PORT = parseInt(process.env.PORT || '3001', 10);
 const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:5173';
+const allowedOrigins = CLIENT_URL.split(',').map((s) => s.trim());
 
 const app = express();
 
 app.use(
     cors({
-        origin: CLIENT_URL,
+        origin: allowedOrigins,
         credentials: true,
     })
 );

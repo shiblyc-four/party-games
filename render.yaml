@@ -1,0 +1,38 @@
+# render.yaml — Render Blueprint for Party Games
+# Deploy: Dashboard → Blueprints → New Blueprint → Connect repo
+
+services:
+  # ─── Game Server (WebSocket + HTTP) ──────────────────────
+  - type: web
+    name: party-games-server
+    runtime: docker
+    repo: https://github.com/shiblyc-four/party-games.git
+    branch: main
+    dockerfilePath: ./packages/server/Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: "3001"
+      - key: CLIENT_URL
+        sync: false  # Set this after deploying the static site
+
+  # ─── Client (Static Site) ────────────────────────────────
+  - type: web
+    name: party-games-client
+    runtime: static
+    repo: https://github.com/shiblyc-four/party-games.git
+    branch: main
+    buildCommand: npm install && npm run build -w packages/shared && npm run build -w packages/client
+    staticPublishPath: packages/client/dist
+    headers:
+      - path: /*
+        name: Cache-Control
+        value: no-cache
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: VITE_SERVER_URL
+        sync: false  # Set to wss://party-games-server.onrender.com after server deploys
