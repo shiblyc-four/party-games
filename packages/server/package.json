@@ -1,0 +1,26 @@
+{
+    "name": "@pulsing-supernova/server",
+    "version": "0.1.0",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "dev": "tsx watch src/index.ts",
+        "build": "tsc",
+        "start": "node dist/index.js",
+        "typecheck": "tsc --noEmit"
+    },
+    "dependencies": {
+        "@colyseus/core": "^0.15.0",
+        "@colyseus/ws-transport": "^0.15.0",
+        "@colyseus/schema": "^2.0.0",
+        "@pulsing-supernova/shared": "*",
+        "express": "^4.21.0",
+        "cors": "^2.8.5"
+    },
+    "devDependencies": {
+        "@types/express": "^5.0.0",
+        "@types/cors": "^2.8.17",
+        "tsx": "^4.19.0",
+        "typescript": "^5.7.0"
+    }
+}
