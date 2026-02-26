@@ -33,7 +33,7 @@ export class TeamController {
 
         player.teamIndex = teamIndex;
         const team = this.state.teams[teamIndex];
-        team.drawerQueue.push(player.sessionId);
+        if (team) team.drawerQueue.push(player.sessionId);
         return true;
     }
 
@@ -50,6 +50,7 @@ export class TeamController {
     private removeFromTeam(player: PlayerSchema): void {
         if (player.teamIndex < 0) return;
         const team = this.state.teams[player.teamIndex];
+        if (!team) return;
         const idx = team.drawerQueue.indexOf(player.sessionId);
         if (idx !== -1) {
             team.drawerQueue.splice(idx, 1);

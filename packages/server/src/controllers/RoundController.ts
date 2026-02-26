@@ -50,7 +50,7 @@ export class RoundController {
         let attempts = 0;
         while (attempts < this.state.teams.length) {
             const team = this.state.teams[this.state.activeTeamIndex];
-            if (team.drawerQueue.length > 0) break;
+            if (team && team.drawerQueue.length > 0) break;
             this.state.activeTeamIndex =
                 (this.state.activeTeamIndex + 1) % this.state.teams.length;
             attempts++;
@@ -168,7 +168,7 @@ export class RoundController {
             word: this.currentWord,
             wasCorrect,
             teamIndex: this.state.activeTeamIndex,
-            teamName: this.state.teams[this.state.activeTeamIndex].name,
+            teamName: this.state.teams[this.state.activeTeamIndex]?.name ?? '',
         });
 
         // Check win condition

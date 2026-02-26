@@ -25,7 +25,7 @@ export class ScoreController {
         if (winMode === 'points') {
             // First to N points wins
             for (let i = 0; i < this.state.teams.length; i++) {
-                if (this.state.teams[i].score >= targetScore) {
+                if (this.state.teams[i]!.score >= targetScore) {
                     return i;
                 }
             }
@@ -35,8 +35,8 @@ export class ScoreController {
                 let maxScore = -1;
                 let winnerIdx = -1;
                 for (let i = 0; i < this.state.teams.length; i++) {
-                    if (this.state.teams[i].score > maxScore) {
-                        maxScore = this.state.teams[i].score;
+                    if (this.state.teams[i]!.score > maxScore) {
+                        maxScore = this.state.teams[i]!.score;
                         winnerIdx = i;
                     }
                 }
