@@ -9,7 +9,7 @@ COPY packages/server/package.json ./packages/server/
 COPY packages/client/package.json ./packages/client/
 
 # Install dependencies
-RUN npm install --workspaces
+RUN npm ci
 
 # Copy source code
 COPY packages/shared/ ./packages/shared/
@@ -18,6 +18,7 @@ COPY tsconfig.base.json ./
 
 # Build
 RUN npm run build -w packages/shared
+RUN node -p "require.resolve('@pulsing-supernova/shared/package.json')"
 RUN npm run build -w packages/server
 
 # Expose port
