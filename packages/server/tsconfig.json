@@ -5,19 +5,9 @@
         "rootDir": "./src",
         "experimentalDecorators": true,
         "emitDecoratorMetadata": true,
-        "useDefineForClassFields": false,
-        "paths": {
-            "@pulsing-supernova/shared": [
-                "../shared/src"
-            ]
-        }
+        "useDefineForClassFields": false
     },
     "include": [
         "src/**/*"
-    ],
-    "references": [
-        {
-            "path": "../shared"
-        }
     ]
 }
