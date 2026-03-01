@@ -164,9 +164,7 @@ export default function App() {
                             className="btn btn-secondary"
                             style={{ padding: '0.25rem 0.75rem', fontSize: 'var(--font-sm)' }}
                             onClick={() => {
-                                if (confirm('Are you sure you want to leave the game?')) {
-                                    game.leaveRoom();
-                                }
+                                game.leaveRoom();
                             }}
                         >
                             Exit
@@ -274,9 +272,7 @@ export default function App() {
                         className="btn btn-secondary"
                         style={{ padding: '0.25rem 0.75rem', fontSize: 'var(--font-sm)' }}
                         onClick={() => {
-                            if (confirm('Are you sure you want to leave the game?')) {
-                                game.leaveRoom();
-                            }
+                            game.leaveRoom();
                         }}
                     >
                         Exit
