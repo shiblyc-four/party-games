@@ -9,6 +9,11 @@ interface GuessingPanelProps {
     guesses: IGuessEntry[];
     chatMessages: IChatEntry[];
     teamName?: string;
+    // FFA
+    isFFA?: boolean;
+    isSuddenDeath?: boolean;
+    winnerSessionIds?: string[];
+    mySessionId?: string;
 }
 
 /**
@@ -21,6 +26,10 @@ export function GuessingPanel({
     guesses,
     chatMessages,
     teamName,
+    isFFA = false,
+    isSuddenDeath = false,
+    winnerSessionIds = [],
+    mySessionId = '',
 }: GuessingPanelProps) {
     const [guessText, setGuessText] = useState('');
     const [chatText, setChatText] = useState('');
@@ -51,16 +60,31 @@ export function GuessingPanel({
         setChatText('');
     };
 
-    const isGuesser = role === 'guesser';
+    // In FFA, any non-drawer can guess; in sudden death only tied players (role = guesser)
+    const isGuesser = isFFA
+        ? (role !== 'drawer')
+        : (role === 'guesser');
+    const iAmTied = isSuddenDeath && winnerSessionIds.includes(mySessionId);
+    const canGuessSuddenDeath = !isSuddenDeath || iAmTied;
 
     return (
         <div className="sidebar-panels">
+            {/* Sudden death banner */}
+            {isSuddenDeath && (
+                <div className="sudden-death-banner animate-pulse">
+                    ⚡ Sudden Death!
+                    {iAmTied
+                        ? ' Race to guess first — you win the game!'
+                        : ' Tied players are racing to guess...'}
+                </div>
+            )}
+
             {/* ── Guess Section (compact) ──────────────────── */}
-            <div className={`guess-section ${isGuesser ? 'active-guesser' : ''}`}>
+            <div className={`guess-section ${isGuesser && canGuessSuddenDeath ? 'active-guesser' : ''}`}>
                 <div className="section-header guess-header">
-                    {isGuesser ? (
+                    {isGuesser && canGuessSuddenDeath ? (
                         <span className="guess-header-active">
-                            🎯 Guess Now — {teamName}!
+                            🎯 {isSuddenDeath ? 'SUDDEN DEATH — Guess now!' : (isFFA ? 'Guess Now!' : `Guess Now — ${teamName}!`)}
                         </span>
                     ) : (
                         <span>🎯 Guesses</span>
@@ -87,7 +111,7 @@ export function GuessingPanel({
                     <div ref={guessEndRef} />
                 </div>
 
-                {isGuesser && (
+                {isGuesser && canGuessSuddenDeath && (
                     <form className="guess-input-area" onSubmit={handleGuessSubmit}>
                         <input
                             className="input guess-input"

@@ -3,7 +3,7 @@ import { GameState, GuessEntrySchema } from '../state/GameState.js';
 import { pickRandomWords, generateHint, revealLetter, TIMING } from '@pulsing-supernova/shared';
 import { TeamController } from './TeamController.js';
 import { ScoreController } from './ScoreController.js';
-import type { Room } from '@colyseus/core';
+import { GameRoom } from '../rooms/GameRoom.js';
 
 /**
  * RoundController — manages the game loop: phase transitions, timers,
@@ -19,7 +19,7 @@ export class RoundController {
         private state: GameState,
         private teamCtrl: TeamController,
         private scoreCtrl: ScoreController,
-        private room: Room,
+        private room: GameRoom,
     ) { }
 
     /** Start the game — transition from lobby/team-select to first round */
@@ -27,11 +27,21 @@ export class RoundController {
         this.state.currentRound = 0;
         this.state.activeTeamIndex = 0;
         this.state.winningTeamIndex = -1;
+        this.state.isSuddenDeath = false;
+        this.state.winnerSessionIds.clear();
 
-        // Reset team scores
-        this.state.teams.forEach((team) => {
-            team.score = 0;
-        });
+        const isFFA = this.state.settings.gameMode === 'ffa';
+
+        if (isFFA) {
+            // FFA: init per-player scores and global drawer queue
+            this.scoreCtrl.resetPlayerScores();
+            this.teamCtrl.initFFA();
+        } else {
+            // Teams: reset team scores
+            this.state.teams.forEach((team) => {
+                team.score = 0;
+            });
+        }
 
         this.startNextRound();
     }
@@ -40,28 +50,38 @@ export class RoundController {
     startNextRound(): void {
         this.state.currentRound++;
         this.clearTimers();
+        this.room.clearCanvas();
 
         // Clear previous round data
         this.state.guesses = new ArraySchema<GuessEntrySchema>();
         this.state.wordHint = '';
         this.currentWord = '';
 
-        // Find next team with players (skip empty teams)
-        let attempts = 0;
-        while (attempts < this.state.teams.length) {
-            const team = this.state.teams[this.state.activeTeamIndex];
-            if (team && team.drawerQueue.length > 0) break;
-            this.state.activeTeamIndex =
-                (this.state.activeTeamIndex + 1) % this.state.teams.length;
-            attempts++;
+        const isFFA = this.state.settings.gameMode === 'ffa';
+
+        let drawerId: string | null;
+
+        if (isFFA) {
+            drawerId = this.teamCtrl.getNextFFADrawer();
+            if (!drawerId) return;
+            this.state.currentDrawer = drawerId;
+            this.teamCtrl.assignFFARoles(drawerId);
+        } else {
+            // Teams mode: find next team with players (skip empty teams)
+            let attempts = 0;
+            while (attempts < this.state.teams.length) {
+                const team = this.state.teams[this.state.activeTeamIndex];
+                if (team && team.drawerQueue.length > 0) break;
+                this.state.activeTeamIndex =
+                    (this.state.activeTeamIndex + 1) % this.state.teams.length;
+                attempts++;
+            }
+
+            drawerId = this.teamCtrl.getNextDrawer(this.state.activeTeamIndex);
+            if (!drawerId) return;
+            this.state.currentDrawer = drawerId;
+            this.teamCtrl.assignRoles(drawerId, this.state.activeTeamIndex);
         }
-
-        // Get next drawer
-        const drawerId = this.teamCtrl.getNextDrawer(this.state.activeTeamIndex);
-        if (!drawerId) return;
-
-        this.state.currentDrawer = drawerId;
-        this.teamCtrl.assignRoles(drawerId, this.state.activeTeamIndex);
 
         // Generate word choices
         this.wordChoicesCache = pickRandomWords(
@@ -135,23 +155,31 @@ export class RoundController {
         const entry = new GuessEntrySchema();
         entry.playerId = playerId;
         entry.nickname = nickname;
-        entry.text = isCorrect ? '✓ Correct!' : guessText; // Don't reveal answer in wrong guesses
+        entry.text = isCorrect ? '✓ Correct!' : guessText;
         entry.isCorrect = isCorrect;
         entry.timestamp = Date.now();
         this.state.guesses.push(entry);
 
         if (isCorrect) {
-            // Score the point
-            this.scoreCtrl.awardPoint(this.state.activeTeamIndex);
+            const isFFA = this.state.settings.gameMode === 'ffa';
 
-            // Broadcast correct guess event
-            this.room.broadcast('correctGuess', {
-                playerId,
-                nickname,
-                word: this.currentWord,
-            });
-
-            this.endRound(true);
+            if (isFFA) {
+                if (this.state.isSuddenDeath) {
+                    // Sudden death winner — end game immediately
+                    this.room.broadcast('correctGuess', { playerId, nickname, word: this.currentWord });
+                    this.endSuddenDeathWin(playerId);
+                } else {
+                    // Normal FFA round: award point to guessing player
+                    this.scoreCtrl.awardPlayerPoint(playerId);
+                    this.room.broadcast('correctGuess', { playerId, nickname, word: this.currentWord });
+                    this.endRound(true);
+                }
+            } else {
+                // Teams mode: award point to active team
+                this.scoreCtrl.awardPoint(this.state.activeTeamIndex);
+                this.room.broadcast('correctGuess', { playerId, nickname, word: this.currentWord });
+                this.endRound(true);
+            }
         }
 
         return isCorrect;
@@ -160,35 +188,115 @@ export class RoundController {
     /** End the current round */
     private endRound(wasCorrect: boolean): void {
         this.clearTimers();
-
         this.state.phase = 'round-end';
+
+        const isFFA = this.state.settings.gameMode === 'ffa';
 
         // Broadcast round result
         this.room.broadcast('roundResult', {
             word: this.currentWord,
             wasCorrect,
             teamIndex: this.state.activeTeamIndex,
-            teamName: this.state.teams[this.state.activeTeamIndex]?.name ?? '',
+            teamName: isFFA ? '' : (this.state.teams[this.state.activeTeamIndex]?.name ?? ''),
         });
 
-        // Check win condition
-        const winner = this.scoreCtrl.checkWinCondition();
-        if (winner !== -1) {
-            setTimeout(() => {
-                this.state.winningTeamIndex = winner;
-                this.state.phase = 'game-over';
-            }, TIMING.ROUND_END_DELAY * 1000);
-            return;
-        }
+        if (isFFA) {
+            // Check FFA win condition
+            const winners = this.scoreCtrl.checkFFAWinCondition();
+            if (winners.length === 1) {
+                // Clear winner
+                setTimeout(() => {
+                    this.state.winnerSessionIds.clear();
+                    winners.forEach(id => this.state.winnerSessionIds.push(id));
+                    this.state.phase = 'game-over';
+                }, TIMING.ROUND_END_DELAY * 1000);
+                return;
+            } else if (winners.length > 1) {
+                // Tied — trigger sudden death
+                setTimeout(() => {
+                    this.startSuddenDeath(winners);
+                }, TIMING.ROUND_END_DELAY * 1000);
+                return;
+            }
+        } else {
+            // Teams mode win condition
+            const winner = this.scoreCtrl.checkWinCondition();
+            if (winner !== -1) {
+                setTimeout(() => {
+                    this.state.winningTeamIndex = winner;
+                    this.state.phase = 'game-over';
+                }, TIMING.ROUND_END_DELAY * 1000);
+                return;
+            }
 
-        // Move to next team
-        this.state.activeTeamIndex =
-            (this.state.activeTeamIndex + 1) % this.state.teams.length;
+            // Move to next team
+            this.state.activeTeamIndex =
+                (this.state.activeTeamIndex + 1) % this.state.teams.length;
+        }
 
         // Start next round after delay
         setTimeout(() => {
             this.startNextRound();
         }, TIMING.ROUND_END_DELAY * 1000);
+    }
+
+    /**
+     * Start a sudden death round to resolve a tie.
+     * A non-tied player is chosen as drawer; only tied players can win.
+     */
+    private startSuddenDeath(tiedIds: string[]): void {
+        this.clearTimers();
+
+        this.state.isSuddenDeath = true;
+        this.state.winnerSessionIds.clear();
+        tiedIds.forEach(id => this.state.winnerSessionIds.push(id));
+
+        // Clear round data
+        this.state.guesses = new ArraySchema<GuessEntrySchema>();
+        this.state.wordHint = '';
+        this.currentWord = '';
+
+        const drawerId = this.teamCtrl.getSuddenDeathDrawer(tiedIds);
+        if (!drawerId) {
+            // Fallback: everybody wins
+            this.state.phase = 'game-over';
+            return;
+        }
+
+        this.state.currentDrawer = drawerId;
+        // In sudden death, tied players = guessers, drawer = drawer, others = spectators
+        this.state.players.forEach((player) => {
+            if (player.sessionId === drawerId) {
+                player.role = 'drawer';
+            } else if (tiedIds.includes(player.sessionId)) {
+                player.role = 'guesser';
+            } else {
+                player.role = 'spectator';
+            }
+        });
+
+        // Generate word choices
+        this.wordChoicesCache = pickRandomWords(this.state.settings.wordCategory, 3);
+        const drawerClient = this.room.clients.find(c => c.sessionId === drawerId);
+        if (drawerClient) {
+            drawerClient.send('wordChoices', { words: this.wordChoicesCache });
+        }
+
+        this.state.phase = 'word-select';
+
+        // Auto-pick if drawer doesn't choose
+        this.timer = setTimeout(() => {
+            this.selectWord(Math.floor(Math.random() * 3));
+        }, TIMING.WORD_CHOICE_TIME * 1000);
+    }
+
+    /** Immediately end the game when sudden death is resolved */
+    private endSuddenDeathWin(winnerSessionId: string): void {
+        this.clearTimers();
+        this.state.isSuddenDeath = false;
+        this.state.winnerSessionIds.clear();
+        this.state.winnerSessionIds.push(winnerSessionId);
+        this.state.phase = 'game-over';
     }
 
     /** Clear all timers */
@@ -209,5 +317,7 @@ export class RoundController {
         this.clearTimers();
         this.currentWord = '';
         this.wordChoicesCache = [];
+        this.state.isSuddenDeath = false;
+        this.state.winnerSessionIds.clear();
     }
 }

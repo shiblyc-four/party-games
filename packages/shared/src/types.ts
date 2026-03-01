@@ -5,11 +5,15 @@
 /** All possible game phases */
 export type GamePhase =
     | 'lobby'
+    | 'mode-select'
     | 'team-select'
     | 'word-select'
     | 'drawing'
     | 'round-end'
     | 'game-over';
+
+/** Game mode — team-based or free-for-all */
+export type GameMode = 'teams' | 'ffa';
 
 /** Player roles assigned each round by the server */
 export type PlayerRole = 'drawer' | 'guesser' | 'opponent' | 'spectator';
@@ -49,6 +53,7 @@ export interface IGameSettings {
     totalRounds: number;      // default 10
     drawTime: number;         // seconds, default 75
     wordCategory: string;     // 'mixed' | category key
+    gameMode: GameMode;       // 'teams' | 'ffa'
 }
 
 // ─── Drawing ──────────────────────────────────────────────
@@ -91,8 +96,12 @@ export interface IGameState {
     wordHint: string;               // "_ _ _ _ _" progressive
     wordChoices: string[];           // 3 choices (only sent to drawer)
     timeRemaining: number;
-    activeTeamIndex: number;         // which team is drawing
+    activeTeamIndex: number;         // which team is drawing (teams mode)
     guesses: IGuessEntry[];
     chatMessages: IChatEntry[];
-    winningTeamIndex: number;        // -1 until game over
+    winningTeamIndex: number;        // -1 until game over (teams mode)
+    // ─── FFA fields ───────────────────────────────────────────
+    playerScores: Map<string, number>; // sessionId → score (ffa mode)
+    winnerSessionIds: string[];        // session IDs of winner(s) (ffa mode)
+    isSuddenDeath: boolean;            // true during tie-breaker round
 }

@@ -14,7 +14,7 @@ import {
     AVATAR_COLORS,
     DEFAULT_SETTINGS,
 } from '@pulsing-supernova/shared';
-import type { IDrawStroke } from '@pulsing-supernova/shared';
+import type { IDrawStroke, GameMode } from '@pulsing-supernova/shared';
 
 interface JoinOptions {
     nickname: string;
@@ -50,8 +50,11 @@ export class GameRoom extends Room<GameState> {
             this
         );
 
-        // Initialize 2 default teams
+        // Initialize 2 default teams (switched to FFA later if host picks FFA)
         this.teamCtrl.initTeams(2);
+
+        // Start at mode-select phase so host can pick Teams or FFA
+        this.state.phase = 'mode-select';
 
         this.registerMessageHandlers();
 
@@ -142,32 +145,51 @@ export class GameRoom extends Room<GameState> {
         const player = this.state.players.get(client.sessionId);
         if (!player) return;
 
-        this.teamCtrl.handleDisconnect(player);
+        if (consented) {
+            // Intentional leave — remove them immediately
+            this.teamCtrl.handleDisconnect(player);
+            this.state.players.delete(client.sessionId);
 
-        try {
-            if (!consented) {
-                // Allow 60 seconds for reconnection
-                await this.allowReconnection(client, 60);
-                this.teamCtrl.handleReconnect(player);
-                console.log(`🔄 ${player.nickname} reconnected`);
-                return;
+            // Re-assign host if needed
+            if (player.isHost && this.clients.length > 0) {
+                const nextHost = this.state.players.values().next().value;
+                if (nextHost) nextHost.isHost = true;
             }
-        } catch {
-            // Reconnection failed or consented leave
+
+            console.log(`👋 ${player.nickname} left room ${this.state.roomCode}`);
+        } else {
+            // Unintentional disconnect — keep them in state as disconnected
+            this.teamCtrl.handleDisconnect(player);
+            console.log(`⚡ ${player.nickname} disconnected from room ${this.state.roomCode} — awaiting reconnect...`);
+
+            try {
+                // Wait up to 20 seconds for the client to reconnect
+                const newClient = await this.allowReconnection(client, 20);
+
+                // Client reconnected successfully!
+                this.teamCtrl.handleReconnect(player);
+                console.log(`🔄 ${player.nickname} reconnected automatically gracefully!`);
+
+                // Send stroke history to reconnected player during drawing phase
+                if (
+                    this.state.phase === 'drawing' &&
+                    this.strokeHistory.length > 0
+                ) {
+                    newClient.send('strokeHistory', this.strokeHistory);
+                }
+            } catch (e) {
+                // Time expired or another error occurred - remove them
+                console.log(`🔌 ${player.nickname} failed to reconnect in time. Removing...`);
+                this.state.players.delete(client.sessionId);
+
+                if (player.isHost && this.clients.length > 0) {
+                    const nextHost = this.state.players.values().next().value;
+                    if (nextHost) nextHost.isHost = true;
+                }
+            }
         }
 
-        // Clean up
-        this.state.players.delete(client.sessionId);
-
-        // If host left, assign to next player
-        if (player.isHost && this.clients.length > 0) {
-            const nextHost = this.state.players.values().next().value;
-            if (nextHost) nextHost.isHost = true;
-        }
-
-        console.log(`👋 ${player.nickname} left room ${this.state.roomCode}`);
-
-        // If room empty, dispose
+        // If room is now completely empty (all clients gone), dispose
         if (this.clients.length === 0) {
             this.disconnect();
         }
@@ -181,6 +203,37 @@ export class GameRoom extends Room<GameState> {
     // ─── Message Handlers ───────────────────────────────────
 
     private registerMessageHandlers(): void {
+        // ─── Game mode selection (host only, in mode-select phase) ──────────────────────
+        this.onMessage(MSG.SET_GAME_MODE, (client, data: { gameMode: GameMode }) => {
+            if (this.state.phase !== 'mode-select') return;
+            const player = this.state.players.get(client.sessionId);
+            if (!player?.isHost) {
+                client.send('error', { message: 'Only the host can select the game mode.' });
+                return;
+            }
+            const mode = data.gameMode;
+            if (mode !== 'teams' && mode !== 'ffa') {
+                client.send('error', { message: 'Invalid game mode.' });
+                return;
+            }
+
+            this.state.settings.gameMode = mode;
+
+            if (mode === 'teams') {
+                // Reset teams if previously cleared (e.g. after a FFA game)
+                if (this.state.teams.length === 0) {
+                    this.teamCtrl.initTeams(2);
+                }
+                this.state.phase = 'lobby'; // proceed to team-select
+            } else {
+                // FFA: skip team-select, stay in mode-select
+                // Phase stays 'mode-select'; host will send START_GAME when ready
+                this.state.phase = 'lobby'; // reuse lobby phase for FFA waiting room
+            }
+
+            console.log(`🎮 Room ${this.state.roomCode} mode set to: ${mode}`);
+        });
+
         // Join team
         this.onMessage(MSG.JOIN_TEAM, (client, data: { teamIndex: number }) => {
             if (this.state.phase !== 'lobby' && this.state.phase !== 'team-select')
@@ -209,7 +262,7 @@ export class GameRoom extends Room<GameState> {
                     return;
                 }
 
-                // Check teams are valid
+                // Check start conditions (mode-aware)
                 const check = this.teamCtrl.canStartGame();
                 if (!check.ok) {
                     client.send('error', { message: check.reason });
@@ -226,11 +279,10 @@ export class GameRoom extends Room<GameState> {
                     if (data.settings.wordCategory) s.wordCategory = data.settings.wordCategory;
                 }
 
-                this.state.phase = 'team-select';
-                // Give players a moment then start
+                // Brief UI sync window then start
                 setTimeout(() => {
                     this.roundCtrl.startGame();
-                }, 2000);
+                }, 500);
             }
         );
 
@@ -282,15 +334,28 @@ export class GameRoom extends Room<GameState> {
             this.broadcast('undo');
         });
 
-        // Guess (guessers only — teammates of drawer)
+        // Guess (role-aware)
         this.onMessage(MSG.GUESS, (client, data: { text: string }) => {
             if (this.state.phase !== 'drawing') return;
             const player = this.state.players.get(client.sessionId);
-            if (!player || player.role !== 'guesser') {
-                client.send('error', {
-                    message: 'Only teammates of the drawer can guess.',
-                });
-                return;
+            if (!player) return;
+
+            const isFFA = this.state.settings.gameMode === 'ffa';
+
+            if (isFFA) {
+                // In FFA, any non-drawer can guess
+                // In sudden death, only tied players (role = 'guesser') can guess
+                if (player.sessionId === this.state.currentDrawer) return;
+                if (this.state.isSuddenDeath && player.role !== 'guesser') {
+                    client.send('error', { message: 'Only tied players can guess in sudden death!' });
+                    return;
+                }
+            } else {
+                // Teams mode: only guessers (drawer's teammates)
+                if (player.role !== 'guesser') {
+                    client.send('error', { message: 'Only teammates of the drawer can guess.' });
+                    return;
+                }
             }
 
             if (!data.text || data.text.trim().length === 0) return;
@@ -336,8 +401,9 @@ export class GameRoom extends Room<GameState> {
             if (!player?.isHost) return;
 
             this.roundCtrl.reset();
-            this.strokeHistory = [];
-            this.state.phase = 'lobby';
+            this.clearCanvas();
+
+            // Reset shared state
             this.state.currentRound = 0;
             this.state.winningTeamIndex = -1;
             this.state.guesses.clear();
@@ -345,11 +411,34 @@ export class GameRoom extends Room<GameState> {
             this.state.currentDrawer = '';
             this.state.wordHint = '';
             this.state.timeRemaining = 0;
+            this.state.isSuddenDeath = false;
+            this.state.winnerSessionIds.clear();
+
+            // Reset mode-specific scores
             this.scoreCtrl.resetScores();
+            this.scoreCtrl.resetPlayerScores();
+
+            // Reset player roles and team assignments
+            this.state.players.forEach((p) => {
+                p.role = 'spectator';
+                p.teamIndex = -1;
+            });
+
+            // Restore default teams for re-selection
+            this.teamCtrl.initTeams(2);
+
+            // Return to mode-select so host can pick again
+            this.state.settings.gameMode = 'teams';
+            this.state.phase = 'mode-select';
         });
     }
 
     // ─── Utilities ──────────────────────────────────────────
+
+    public clearCanvas(): void {
+        this.strokeHistory = [];
+        this.broadcast('clearCanvas');
+    }
 
     private generateRoomCode(): string {
         const chars = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // no ambiguous chars

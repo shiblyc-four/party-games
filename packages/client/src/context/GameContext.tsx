@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useRef, useCallback } from 'react';
+import React, { createContext, useContext, useState, useRef, useCallback, useEffect } from 'react';
 import { Client, Room } from 'colyseus.js';
 import type {
     IPlayer,
@@ -7,6 +7,7 @@ import type {
     IGuessEntry,
     IChatEntry,
     GamePhase,
+    GameMode,
     IDrawStroke,
 } from '@pulsing-supernova/shared';
 
@@ -32,6 +33,11 @@ interface GameState {
     myRole: string;
     wordChoices: string[];
     secretWord: string;
+    // ─── FFA fields ───────────────────────────────────────────
+    gameMode: GameMode;
+    playerScores: Map<string, number>;
+    winnerSessionIds: string[];
+    isSuddenDeath: boolean;
 }
 
 interface GameContextValue extends GameState {
@@ -67,6 +73,7 @@ const INITIAL_GAME_STATE: GameState = {
         totalRounds: 10,
         drawTime: 75,
         wordCategory: 'mixed',
+        gameMode: 'teams',
     },
     currentDrawer: '',
     wordHint: '',
@@ -79,6 +86,11 @@ const INITIAL_GAME_STATE: GameState = {
     myRole: 'spectator',
     wordChoices: [],
     secretWord: '',
+    // FFA defaults
+    gameMode: 'teams',
+    playerScores: new Map(),
+    winnerSessionIds: [],
+    isSuddenDeath: false,
 };
 
 const SERVER_URL = import.meta.env.VITE_SERVER_URL || 'ws://localhost:3001';
@@ -153,6 +165,19 @@ function extractState(room: Room): GameState {
 
     const myPlayer = players.get(sessionId) || null;
 
+    // Extract FFA fields
+    const playerScores = new Map<string, number>();
+    if (s.playerScores) {
+        s.playerScores.forEach((score: number, id: string) => {
+            playerScores.set(id, score);
+        });
+    }
+
+    const winnerSessionIds: string[] = [];
+    if (s.winnerSessionIds) {
+        s.winnerSessionIds.forEach((id: string) => winnerSessionIds.push(id));
+    }
+
     return {
         phase: s.phase || 'lobby',
         roomCode: s.roomCode || '',
@@ -165,6 +190,7 @@ function extractState(room: Room): GameState {
             totalRounds: s.settings?.totalRounds || 10,
             drawTime: s.settings?.drawTime || 75,
             wordCategory: s.settings?.wordCategory || 'mixed',
+            gameMode: (s.settings?.gameMode as GameMode) || 'teams',
         },
         currentDrawer: s.currentDrawer || '',
         wordHint: s.wordHint || '',
@@ -177,6 +203,11 @@ function extractState(room: Room): GameState {
         myRole: myPlayer?.role || 'spectator',
         wordChoices: [],
         secretWord: '',
+        // FFA
+        gameMode: (s.settings?.gameMode as GameMode) || 'teams',
+        playerScores,
+        winnerSessionIds,
+        isSuddenDeath: s.isSuddenDeath ?? false,
     };
 }
 
@@ -207,6 +238,7 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
     const [gameState, setGameState] = useState<GameState>({ ...INITIAL_GAME_STATE });
     const [error, setError] = useState<string | null>(null);
     const [isConnecting, setIsConnecting] = useState(false);
+
 
     // ── Sync helper ────────────────────────────────────────
     const syncState = useCallback(() => {
@@ -252,7 +284,34 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
         });
 
         // Disconnect handling
-        r.onLeave((code: number) => {
+        r.onLeave(async (code: number) => {
+            if (code === 1000) {
+                // Intentional leave
+                sessionStorage.removeItem('reconnectionToken');
+                roomRef.current = null;
+                setRoom(null);
+                setGameState({ ...INITIAL_GAME_STATE });
+                return;
+            }
+
+            // Abnormal disconnect
+            const token = sessionStorage.getItem('reconnectionToken');
+            if (token) {
+                console.log("Connection lost. Attempting to reconnect...");
+                try {
+                    const newRoom = await clientRef.current.reconnect(token);
+                    roomRef.current = newRoom;
+                    setRoom(newRoom);
+                    wireRoom(newRoom);
+                    sessionStorage.setItem('reconnectionToken', newRoom.reconnectionToken);
+                    console.log("Reconnected successfully!");
+                    return; // Don't wipe state, recovered!
+                } catch (e) {
+                    console.error("Reconnection failed:", e);
+                    sessionStorage.removeItem('reconnectionToken');
+                }
+            }
+
             roomRef.current = null;
             setRoom(null);
             setGameState({ ...INITIAL_GAME_STATE });
@@ -287,6 +346,37 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
         }
     }, [syncState]);
 
+    // Initial check for reconnection token on mount
+    useEffect(() => {
+        let ignore = false;
+        const token = sessionStorage.getItem('reconnectionToken');
+        if (token && !roomRef.current) {
+            setIsConnecting(true);
+            clientRef.current.reconnect(token)
+                .then(r => {
+                    if (ignore) {
+                        r.leave();
+                        return;
+                    }
+                    console.log("Restored previous session!");
+                    roomRef.current = r;
+                    setRoom(r);
+                    wireRoom(r);
+                    sessionStorage.setItem('reconnectionToken', r.reconnectionToken);
+                })
+                .catch(err => {
+                    if (ignore) return;
+                    console.warn("Could not restore session:", err);
+                    sessionStorage.removeItem('reconnectionToken');
+                })
+                .finally(() => {
+                    if (ignore) return;
+                    setIsConnecting(false);
+                });
+        }
+        return () => { ignore = true; };
+    }, [wireRoom]);
+
     // ── Actions ────────────────────────────────────────────
 
     const createRoom = useCallback(async (nickname: string) => {
@@ -294,6 +384,7 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
         setError(null);
         try {
             const r = await clientRef.current.create('pictionary', { nickname });
+            sessionStorage.setItem('reconnectionToken', r.reconnectionToken);
             roomRef.current = r;
             setRoom(r);
             wireRoom(r);
@@ -320,6 +411,7 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
                 return;
             }
             const r = await clientRef.current.joinById(target.roomId, { nickname });
+            sessionStorage.setItem('reconnectionToken', r.reconnectionToken);
             roomRef.current = r;
             setRoom(r);
             wireRoom(r);
@@ -332,6 +424,7 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
     }, [wireRoom]);
 
     const leaveRoom = useCallback(() => {
+        sessionStorage.removeItem('reconnectionToken');
         roomRef.current?.leave();
         roomRef.current = null;
         setRoom(null);

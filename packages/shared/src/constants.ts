@@ -11,6 +11,7 @@ export const DEFAULT_SETTINGS: IGameSettings = {
     totalRounds: 10,
     drawTime: 75,
     wordCategory: 'mixed',
+    gameMode: 'teams',
 };
 
 /** Timing constants (in seconds) */
@@ -56,6 +57,9 @@ export const DRAWING_DEFAULTS = {
 // ═══════════════════════════════════════════════════════════
 
 export const MSG = {
+    // Lobby / mode select
+    SET_GAME_MODE: 'setGameMode',
+
     // Lobby / team select
     JOIN_TEAM: 'joinTeam',
     SPECTATE: 'spectate',

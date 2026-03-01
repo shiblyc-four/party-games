@@ -7,6 +7,7 @@ import type {
     IGuessEntry,
     IChatEntry,
     GamePhase,
+    GameMode,
     IDrawStroke,
 } from '@pulsing-supernova/shared';
 
@@ -28,6 +29,11 @@ interface GameStateHook {
     myRole: string;
     wordChoices: string[];
     secretWord: string;
+    // FFA
+    gameMode: GameMode;
+    playerScores: Map<string, number>;
+    winnerSessionIds: string[];
+    isSuddenDeath: boolean;
 }
 
 const INITIAL_STATE: GameStateHook = {
@@ -42,6 +48,7 @@ const INITIAL_STATE: GameStateHook = {
         totalRounds: 10,
         drawTime: 75,
         wordCategory: 'mixed',
+        gameMode: 'teams',
     },
     currentDrawer: '',
     wordHint: '',
@@ -54,6 +61,11 @@ const INITIAL_STATE: GameStateHook = {
     myRole: 'spectator',
     wordChoices: [],
     secretWord: '',
+    // FFA
+    gameMode: 'teams',
+    playerScores: new Map(),
+    winnerSessionIds: [],
+    isSuddenDeath: false,
 };
 
 /**
@@ -127,6 +139,18 @@ function extractState(room: Room): GameStateHook {
 
     const myPlayer = players.get(sessionId) || null;
 
+    // Extract FFA fields
+    const playerScores = new Map<string, number>();
+    if (s.playerScores) {
+        s.playerScores.forEach((score: number, id: string) => {
+            playerScores.set(id, score);
+        });
+    }
+    const winnerSessionIds: string[] = [];
+    if (s.winnerSessionIds) {
+        s.winnerSessionIds.forEach((id: string) => winnerSessionIds.push(id));
+    }
+
     return {
         phase: s.phase || 'lobby',
         roomCode: s.roomCode || '',
@@ -139,6 +163,7 @@ function extractState(room: Room): GameStateHook {
             totalRounds: s.settings?.totalRounds || 10,
             drawTime: s.settings?.drawTime || 75,
             wordCategory: s.settings?.wordCategory || 'mixed',
+            gameMode: (s.settings?.gameMode as GameMode) || 'teams',
         },
         currentDrawer: s.currentDrawer || '',
         wordHint: s.wordHint || '',
@@ -151,6 +176,11 @@ function extractState(room: Room): GameStateHook {
         myRole: myPlayer?.role || 'spectator',
         wordChoices: [],
         secretWord: '',
+        // FFA
+        gameMode: (s.settings?.gameMode as GameMode) || 'teams',
+        playerScores,
+        winnerSessionIds,
+        isSuddenDeath: s.isSuddenDeath ?? false,
     };
 }
 

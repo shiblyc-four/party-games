@@ -1,11 +1,14 @@
 import React from 'react';
 import type { ITeam, IPlayer } from '@pulsing-supernova/shared';
+import type { GameMode } from '@pulsing-supernova/shared';
 
 interface ScoreboardProps {
     teams: ITeam[];
     players: Map<string, IPlayer>;
     activeTeamIndex: number;
     currentDrawer: string;
+    gameMode?: GameMode;
+    playerScores?: Map<string, number>;
 }
 
 export function Scoreboard({
@@ -13,7 +16,48 @@ export function Scoreboard({
     players,
     activeTeamIndex,
     currentDrawer,
+    gameMode = 'teams',
+    playerScores = new Map(),
 }: ScoreboardProps) {
+    // ─── FFA leaderboard ────────────────────────────────────────
+    if (gameMode === 'ffa') {
+        const playerList = Array.from(players.values())
+            .filter(p => p.teamIndex >= 0 || p.sessionId === currentDrawer)
+            .sort((a, b) => {
+                const sa = playerScores.get(a.sessionId) ?? 0;
+                const sb = playerScores.get(b.sessionId) ?? 0;
+                return sb - sa; // descending
+            });
+
+        return (
+            <div className="game-sidebar-left">
+                <div className="ffa-leaderboard-header">🏅 Leaderboard</div>
+                {playerList.map((p) => {
+                    const score = playerScores.get(p.sessionId) ?? 0;
+                    const isDrawing = p.sessionId === currentDrawer;
+                    return (
+                        <div
+                            key={p.sessionId}
+                            className="ffa-player-row"
+                            style={{ borderColor: isDrawing ? p.avatarColor : undefined }}
+                        >
+                            <div className="player-avatar" style={{ background: p.avatarColor }} />
+                            <div className="ffa-player-info">
+                                <span className="player-name" style={{ fontSize: 'var(--font-sm)' }}>
+                                    {p.nickname}
+                                    {p.isHost && <span className="badge badge-host" style={{ marginLeft: 4 }}>👑</span>}
+                                </span>
+                                {isDrawing && <span className="badge badge-drawer" style={{ fontSize: '10px' }}>✏️ Drawing</span>}
+                            </div>
+                            <span className="ffa-player-score" style={{ color: isDrawing ? p.avatarColor : 'var(--text-primary)' }}>
+                                {score}
+                            </span>
+                        </div>
+                    );
+                })}
+            </div>
+        );
+    }
     return (
         <div className="game-sidebar-left">
             {teams.map((team, idx) => {

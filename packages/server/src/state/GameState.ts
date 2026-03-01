@@ -1,5 +1,5 @@
 import { Schema, type, MapSchema, ArraySchema } from '@colyseus/schema';
-import type { GamePhase, PlayerRole, WinMode } from '@pulsing-supernova/shared';
+import type { GamePhase, PlayerRole, WinMode, GameMode } from '@pulsing-supernova/shared';
 
 // ═══════════════════════════════════════════════════════════
 // Colyseus Schema — auto-synced to all clients
@@ -28,6 +28,7 @@ export class GameSettingsSchema extends Schema {
     @type('int32') totalRounds: number = 10;
     @type('int32') drawTime: number = 75;
     @type('string') wordCategory: string = 'mixed';
+    @type('string') gameMode: GameMode = 'teams';
 }
 
 export class GuessEntrySchema extends Schema {
@@ -59,4 +60,8 @@ export class GameState extends Schema {
     @type([GuessEntrySchema]) guesses = new ArraySchema<GuessEntrySchema>();
     @type([ChatEntrySchema]) chatMessages = new ArraySchema<ChatEntrySchema>();
     @type('int8') winningTeamIndex: number = -1;
+    // ─── FFA fields ──────────────────────────────────────────
+    @type({ map: 'number' }) playerScores = new MapSchema<number>();
+    @type(['string']) winnerSessionIds = new ArraySchema<string>();
+    @type('boolean') isSuddenDeath: boolean = false;
 }

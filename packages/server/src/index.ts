@@ -28,7 +28,11 @@ app.get('/health', (_req, res) => {
 const httpServer = createServer(app);
 
 const gameServer = new Server({
-    transport: new WebSocketTransport({ server: httpServer }),
+    transport: new WebSocketTransport({
+        server: httpServer,
+        pingInterval: 10000,
+        pingMaxRetries: 6,
+    }),
 });
 
 // Register game rooms
