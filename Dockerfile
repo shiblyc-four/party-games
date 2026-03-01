@@ -18,7 +18,6 @@ COPY tsconfig.base.json ./
 
 # Build
 RUN npm run build -w packages/shared
-RUN node -p "require.resolve('@pulsing-supernova/shared/package.json')"
 RUN npm run build -w packages/server
 
 # Expose port
