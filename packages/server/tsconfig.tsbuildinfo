@@ -1,1 +1,0 @@
-{"root":["./src/index.ts","./src/controllers/roundcontroller.ts","./src/controllers/scorecontroller.ts","./src/controllers/teamcontroller.ts","./src/rooms/gameroom.ts","./src/state/gamestate.ts"],"version":"5.9.3"}
